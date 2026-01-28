@@ -66,15 +66,26 @@ function copyStaticFiles() {
   };
 }
 
+// Build content script separately as IIFE (no ES module imports)
+const isContentBuild = process.env.BUILD_CONTENT === 'true';
+
 export default defineConfig({
-  plugins: [vue(), copyStaticFiles()],
+  plugins: isContentBuild ? [] : [vue(), copyStaticFiles()],
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
-    rollupOptions: {
+    emptyOutDir: !isContentBuild, // Don't empty on content build (runs second)
+    rollupOptions: isContentBuild ? {
+      // Content script build - IIFE format, no imports
+      input: resolve(__dirname, 'src/content/index.ts'),
+      output: {
+        format: 'iife',
+        entryFileNames: 'src/content/index.js',
+        inlineDynamicImports: true,
+      },
+    } : {
+      // Main build - background, devtools, panel
       input: {
         background: resolve(__dirname, 'src/background/index.ts'),
-        content: resolve(__dirname, 'src/content/index.ts'),
         devtools: resolve(__dirname, 'src/devtools/devtools.ts'),
         'panel-main': resolve(__dirname, 'src/devtools/panel-main.ts'),
       },
@@ -82,7 +93,6 @@ export default defineConfig({
         entryFileNames: (chunkInfo) => {
           const name = chunkInfo.name;
           if (name === 'background') return 'src/background/index.js';
-          if (name === 'content') return 'src/content/index.js';
           if (name === 'devtools') return 'src/devtools/devtools.js';
           if (name === 'panel-main') return 'src/devtools/panel-main.js';
           return '[name].js';

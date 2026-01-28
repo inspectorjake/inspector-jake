@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
-    "build": "vite build",
+    "build": "vite build && BUILD_CONTENT=true vite build",
+    "build:main": "vite build",
+    "build:content": "BUILD_CONTENT=true vite build",
     "lint": "echo 'No lint configured'"
   },
   "dependencies": {
