@@ -67,6 +67,12 @@ export async function createWsServer(port: number): Promise<WsServerInstance> {
     // Create WebSocket server attached to HTTP server
     const wss = new WebSocketServer({ server: httpServer });
 
+    // Handle WebSocketServer errors (fires when httpServer fails to bind)
+    wss.on('error', (err) => {
+      // Swallow - httpServer error handler will reject the promise
+      log.debug('WS', 'WebSocketServer error (expected during port scan):', (err as Error).message);
+    });
+
     httpServer.on('error', (err) => {
       reject(err);
     });
