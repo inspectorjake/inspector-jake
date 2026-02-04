@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="packages/chrome-extension/icons/logo.svg" alt="Inspector Jake" width="128" height="128">
-</p>
+<img src="packages/chrome-extension/icons/logo.svg" alt="Inspector Jake" width="128" height="128">
 
 # Inspector Jake
 
