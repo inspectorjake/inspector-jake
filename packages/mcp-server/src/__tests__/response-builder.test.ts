@@ -112,7 +112,7 @@ describe('renderSelections', () => {
     width: 100,
     height: 50,
     rect: { x: 10, y: 20, width: 100, height: 50 },
-    hint: 'Use inspector_view_image with imageId="el-1"',
+    hint: 'Use view_user_selection_image with imageId="el-1"',
     ...overrides,
   });
 
@@ -190,10 +190,10 @@ describe('renderSelections', () => {
     const selections = [
       createElementSelection({
         id: 'el-1',
-        hint: 'Use inspector_view_image with imageId="el-1"',
+        hint: 'Use view_user_selection_image with imageId="el-1"',
       }),
     ];
     const content = renderSelections(selections);
-    expect(content[0].text).toContain('Use inspector_view_image with imageId="el-1"');
+    expect(content[0].text).toContain('Use view_user_selection_image with imageId="el-1"');
   });
 });

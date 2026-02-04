@@ -8,16 +8,12 @@
 import type {
   ToolRequest,
   ToolResponse,
-  GetSelectedElementResponse,
-  SnapshotResponse,
   ScreenshotResponse,
-  GetPageInfoResponse,
+  GetPageInfoRequest,
   ElementInfo,
-  ScreenshotRequest,
   Selection,
   GetSelectionsRequest,
   ViewImageRequest,
-  InteractiveContextRequest,
   InteractiveContextResponse,
   BrowserClickRequest,
   BrowserTypeRequest,
@@ -29,6 +25,8 @@ import type {
   BrowserActionResponse,
   BrowserEvaluateResponse,
   BrowserConsoleLogsResponse,
+  WaitForElementRequest,
+  WaitForElementResponse,
 } from '@inspector-jake/shared';
 import { formatDimensions } from '@inspector-jake/shared';
 import {
@@ -124,7 +122,7 @@ function buildSelectionsResponse(selections: Selection[] = storedSelections): Se
       selector: sel.selector,
       tagName: sel.tagName,
       className: sel.className,
-      hint: `Use inspector_view_image tool with imageId="${sel.id}" to see this element's screenshot`,
+      hint: `Use view_user_selection_image tool with imageId="${sel.id}" to see this element's screenshot`,
     };
   });
 }
@@ -165,124 +163,102 @@ export async function handleToolRequest(
 
   try {
     switch (type) {
-      case 'inspector_get_selected_element':
-        return {
-          id,
-          success: true,
-          result: handleGetSelectedElement(tabId),
-        };
-
-      case 'inspector_get_selections':
+      case 'get_user_selections':
         return {
           id,
           success: true,
           result: handleGetSelections(),
         };
 
-      case 'inspector_view_image':
+      case 'view_user_selection_image':
         return {
           id,
           success: true,
           result: handleViewImage(payload as ViewImageRequest),
         };
 
-      case 'inspector_snapshot':
+      case 'get_page_info':
         return {
           id,
           success: true,
-          result: await handleSnapshot(tabId),
+          result: await handleCombinedPageInfo(tabId, payload as GetPageInfoRequest),
         };
 
-      case 'inspector_screenshot':
-        return {
-          id,
-          success: true,
-          result: await handleScreenshot(tabId, payload as ScreenshotRequest),
-        };
-
-      case 'inspector_get_page_info':
-        return {
-          id,
-          success: true,
-          result: await handleGetPageInfo(tabId),
-        };
-
-      // Browser automation tools
-      case 'interactive_context':
-        return {
-          id,
-          success: true,
-          result: await handleInteractiveContext(tabId, payload as InteractiveContextRequest),
-        };
-
-      case 'browser_screenshot':
+      case 'capture_screenshot':
         return {
           id,
           success: true,
           result: await handleBrowserScreenshot(tabId, payload as BrowserScreenshotRequest),
         };
 
-      case 'browser_evaluate':
+      case 'run_javascript':
         return {
           id,
           success: true,
           result: await handleBrowserEvaluate(tabId, payload as BrowserEvaluateRequest),
         };
 
-      case 'browser_get_console_logs':
+      case 'get_console_logs':
         return {
           id,
           success: true,
           result: await handleBrowserGetConsoleLogs(tabId, payload as BrowserGetConsoleLogsRequest),
         };
 
-      case 'browser_navigate':
+      case 'navigate_to_url':
         return {
           id,
           success: true,
           result: await handleBrowserNavigate(tabId, payload as BrowserNavigateRequest),
         };
 
-      case 'browser_go_back':
+      case 'go_back':
         return {
           id,
           success: true,
           result: await handleBrowserGoBack(tabId),
         };
 
-      case 'browser_go_forward':
+      case 'go_forward':
         return {
           id,
           success: true,
           result: await handleBrowserGoForward(tabId),
         };
 
-      case 'browser_reload':
+      case 'reload_page':
         return {
           id,
           success: true,
           result: await handleBrowserReload(tabId),
         };
 
-      case 'browser_click':
+      case 'click_element':
         return {
           id,
           success: true,
           result: await handleBrowserClick(tabId, payload as BrowserClickRequest),
         };
 
-      case 'browser_type':
+      case 'type_into_element':
         return {
           id,
           success: true,
           result: await handleBrowserType(tabId, payload as BrowserTypeRequest),
         };
 
-      case 'browser_select_option':
+      case 'select_dropdown_option':
         return {
           id,
           success: true,
           result: await handleBrowserSelectOption(tabId, payload as BrowserSelectOptionRequest),
+        };
+
+      case 'wait_for_element':
+        return {
+          id,
+          success: true,
+          result: await handleWaitForElement(tabId, payload as WaitForElementRequest),
         };
 
       default:
@@ -302,31 +278,7 @@ export async function handleToolRequest(
 }
 
 /**
- * Handle inspector_get_selected_element tool.
- * Now includes unified selections with differentiated response format.
- */
-function handleGetSelectedElement(tabId: number | null): GetSelectedElementResponse & { selections?: SelectionResponse[] } {
-  const selectionsResponse = buildSelectionsResponse();
-  const selections = selectionsResponse.length > 0 ? selectionsResponse : undefined;
-
-  if (!tabId) {
-    return { selected: false, reason: 'No element selected', selections };
-  }
-
-  if (!isDevToolsOpen(tabId)) {
-    return { selected: false, reason: 'DevTools not open', selections };
-  }
-
-  const element = selectedElements.get(tabId);
-  if (!element) {
-    return { selected: false, reason: 'No element selected', selections };
-  }
-
-  return { selected: true, element, selections };
-}
-
-/**
- * Handle inspector_get_selections tool.
+ * Handle get_user_selections tool.
  * Returns all selections with differentiated response format.
  */
 function handleGetSelections(): { selections: SelectionResponse[] } {
@@ -334,7 +286,7 @@ function handleGetSelections(): { selections: SelectionResponse[] } {
 }
 
 /**
- * Handle inspector_view_image tool.
+ * Handle view_image tool.
  * Returns the stored image for an element selection by its ID.
  */
 function handleViewImage(payload: ViewImageRequest): { image: string; width: number; height: number } | { error: string } {
@@ -353,131 +305,7 @@ function handleViewImage(payload: ViewImageRequest): { image: string; width: num
 }
 
 /**
- * Handle inspector_snapshot tool.
- * Injects content script to capture ARIA accessibility tree.
- */
-async function handleSnapshot(tabId: number | null): Promise<SnapshotResponse & { selections?: SelectionResponse[] }> {
-  if (!tabId) {
-    throw new Error('No tab connected');
-  }
-
-  // Execute content script to get accessibility tree
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: captureAccessibilityTree,
-  });
-
-  if (!results || results.length === 0 || !results[0].result) {
-    throw new Error('Failed to capture accessibility tree');
-  }
-
-  const selectionsResponse = buildSelectionsResponse();
-
-  return {
-    snapshot: results[0].result,
-    selections: selectionsResponse.length > 0 ? selectionsResponse : undefined,
-  };
-}
-
-/**
- * Capture accessibility tree from the page.
- * This function runs in the content script context.
- */
-function captureAccessibilityTree(): string {
-  const lines: string[] = [];
-
-  function processNode(node: Element, depth: number = 0): void {
-    const indent = '  '.repeat(depth);
-    const role = node.getAttribute('role') || getImplicitRole(node);
-    const name = getAccessibleName(node);
-    const tagName = node.tagName.toLowerCase();
-
-    // Build node representation
-    let line = `${indent}[${role || tagName}]`;
-    if (name) {
-      line += ` "${name}"`;
-    }
-
-    // Add key attributes
-    const id = node.id;
-    const href = node.getAttribute('href');
-    const type = node.getAttribute('type');
-
-    const attrs: string[] = [];
-    if (id) attrs.push(`id="${id}"`);
-    if (href) attrs.push(`href="${href}"`);
-    if (type) attrs.push(`type="${type}"`);
-
-    if (attrs.length > 0) {
-      line += ` (${attrs.join(', ')})`;
-    }
-
-    lines.push(line);
-
-    // Process children
-    for (const child of node.children) {
-      processNode(child, depth + 1);
-    }
-  }
-
-  function getImplicitRole(el: Element): string | null {
-    const tag = el.tagName.toLowerCase();
-    const roleMap: Record<string, string> = {
-      a: 'link',
-      button: 'button',
-      h1: 'heading',
-      h2: 'heading',
-      h3: 'heading',
-      h4: 'heading',
-      h5: 'heading',
-      h6: 'heading',
-      img: 'image',
-      input: 'textbox',
-      nav: 'navigation',
-      main: 'main',
-      header: 'banner',
-      footer: 'contentinfo',
-      form: 'form',
-      table: 'table',
-      ul: 'list',
-      ol: 'list',
-      li: 'listitem',
-    };
-    return roleMap[tag] || null;
-  }
-
-  function getAccessibleName(el: Element): string | null {
-    // aria-label takes precedence
-    const ariaLabel = el.getAttribute('aria-label');
-    if (ariaLabel) return ariaLabel;
-
-    // aria-labelledby
-    const labelledBy = el.getAttribute('aria-labelledby');
-    if (labelledBy) {
-      const labelEl = document.getElementById(labelledBy);
-      if (labelEl) return labelEl.textContent?.trim() || null;
-    }
-
-    // Alt text for images
-    if (el.tagName === 'IMG') {
-      return (el as HTMLImageElement).alt || null;
-    }
-
-    // Text content for interactive elements
-    const interactiveElements = ['BUTTON', 'A', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'];
-    if (interactiveElements.includes(el.tagName)) {
-      return el.textContent?.trim().slice(0, 100) || null;
-    }
-
-    return null;
-  }
-
-  processNode(document.body);
-  return lines.join('\n');
-}
-
-/**
- * Handle inspector_screenshot tool.
+ * Handle screenshot capture (internal, used by capture_screenshot fallback).
  * Supports optional CSS selector to capture specific element.
  */
 async function handleScreenshot(
@@ -547,7 +375,7 @@ async function handleScreenshot(
 }
 
 /**
- * Handle inspector_get_page_info tool.
+ * Handle page info request (internal helper for get_page_info).
  */
 async function handleGetPageInfo(tabId: number | null): Promise<GetPageInfoResponse> {
   if (!tabId) {
@@ -571,6 +399,51 @@ async function handleGetPageInfo(tabId: number | null): Promise<GetPageInfoRespo
     url: tab.url || '',
     title: tab.title || '',
     viewport,
+  };
+}
+
+/**
+ * Handle combined get_page_info tool.
+ * Merges page info (URL, title, viewport) with interactive ARIA snapshot and selections.
+ */
+async function handleCombinedPageInfo(
+  tabId: number | null,
+  payload: GetPageInfoRequest
+): Promise<InteractiveContextResponse> {
+  if (!tabId) {
+    throw new Error('No tab connected');
+  }
+
+  // Get page info
+  const tab = await chrome.tabs.get(tabId);
+
+  // Get viewport dimensions
+  const viewportResults = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }),
+  });
+
+  const viewport = viewportResults[0]?.result || { width: 0, height: 0 };
+
+  // Generate ARIA snapshot with refs
+  const snapshotResults = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: generateInteractiveSnapshot,
+    args: [payload.selector || null],
+  });
+
+  if (!snapshotResults || snapshotResults.length === 0 || !snapshotResults[0].result) {
+    throw new Error('Failed to generate page snapshot');
+  }
+
+  return {
+    url: tab.url || '',
+    title: tab.title || '',
+    viewport,
+    snapshot: snapshotResults[0].result,
   };
 }
 
@@ -659,44 +532,8 @@ async function cropImageToRect(
 // Browser Automation Tool Handlers
 // =============================================================================
 
-// Console log storage for browser_get_console_logs
+// Console log storage for get_console_logs
 const consoleLogs: Map<number, Array<{ type: string; message: string; timestamp: number }>> = new Map();
-
-/**
- * Handle interactive_context tool.
- * Returns ARIA tree with element refs + user selections.
- */
-async function handleInteractiveContext(
-  tabId: number | null,
-  payload: InteractiveContextRequest
-): Promise<InteractiveContextResponse> {
-  if (!tabId) {
-    throw new Error('No tab connected');
-  }
-
-  // Get page info
-  const tab = await chrome.tabs.get(tabId);
-
-  // Execute content script to generate ARIA snapshot with refs
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: generateInteractiveSnapshot,
-    args: [payload.selector || null],
-  });
-
-  if (!results || results.length === 0 || !results[0].result) {
-    throw new Error('Failed to generate interactive context');
-  }
-
-  const selectionsResponse = buildSelectionsResponse();
-
-  return {
-    url: tab.url || '',
-    title: tab.title || '',
-    snapshot: results[0].result,
-    selections: selectionsResponse.length > 0 ? selectionsResponse : undefined,
-  };
-}
 
 /**
  * Content script function to generate ARIA snapshot with refs.
@@ -925,7 +762,7 @@ function generateInteractiveSnapshot(rootSelector: string | null): string {
 }
 
 /**
- * Handle browser_screenshot tool.
+ * Handle capture_screenshot tool.
  * Enhanced screenshot with ref support and full page option.
  */
 async function handleBrowserScreenshot(
@@ -989,7 +826,7 @@ async function handleBrowserScreenshot(
 }
 
 /**
- * Handle browser_evaluate tool.
+ * Handle run_javascript tool.
  * Executes JavaScript in the page context.
  */
 async function handleBrowserEvaluate(
@@ -1027,7 +864,7 @@ async function handleBrowserEvaluate(
 }
 
 /**
- * Handle browser_get_console_logs tool.
+ * Handle get_console_logs tool.
  * Returns captured console logs.
  */
 async function handleBrowserGetConsoleLogs(
@@ -1062,7 +899,7 @@ async function handleBrowserGetConsoleLogs(
 }
 
 /**
- * Handle browser_navigate tool.
+ * Handle navigate_to_url tool.
  */
 async function handleBrowserNavigate(
   tabId: number | null,
@@ -1077,7 +914,7 @@ async function handleBrowserNavigate(
 }
 
 /**
- * Handle browser_go_back tool.
+ * Handle go_back tool.
  */
 async function handleBrowserGoBack(tabId: number | null): Promise<BrowserActionResponse> {
   if (!tabId) {
@@ -1089,7 +926,7 @@ async function handleBrowserGoBack(tabId: number | null): Promise<BrowserActionR
 }
 
 /**
- * Handle browser_go_forward tool.
+ * Handle go_forward tool.
  */
 async function handleBrowserGoForward(tabId: number | null): Promise<BrowserActionResponse> {
   if (!tabId) {
@@ -1101,7 +938,7 @@ async function handleBrowserGoForward(tabId: number | null): Promise<BrowserActi
 }
 
 /**
- * Handle browser_reload tool.
+ * Handle reload_page tool.
  */
 async function handleBrowserReload(tabId: number | null): Promise<BrowserActionResponse> {
   if (!tabId) {
@@ -1113,7 +950,7 @@ async function handleBrowserReload(tabId: number | null): Promise<BrowserActionR
 }
 
 /**
- * Handle browser_click tool.
+ * Handle click_element tool.
  * Clicks an element by ref or selector.
  */
 async function handleBrowserClick(
@@ -1219,7 +1056,7 @@ async function handleBrowserClick(
 }
 
 /**
- * Handle browser_type tool.
+ * Handle type_into_element tool.
  * Types text into an input element.
  */
 async function handleBrowserType(
@@ -1313,7 +1150,7 @@ async function handleBrowserType(
 }
 
 /**
- * Handle browser_select_option tool.
+ * Handle select_dropdown_option tool.
  * Selects an option in a <select> element.
  */
 async function handleBrowserSelectOption(
@@ -1381,4 +1218,52 @@ async function handleBrowserSelectOption(
   }
 
   return { success: true, message: `Selected option: ${result.result.selectedLabel}` };
+}
+
+/**
+ * Handle wait_for_element tool.
+ * Waits until a CSS selector matches an element on the page.
+ * Uses MutationObserver + immediate check for reliability.
+ */
+async function handleWaitForElement(
+  tabId: number | null,
+  payload: WaitForElementRequest
+): Promise<WaitForElementResponse> {
+  if (!tabId) throw new Error('No tab connected');
+
+  const timeout = Math.min(payload.timeout ?? 5000, 30000);
+
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (selector: string, timeoutMs: number) => {
+      return new Promise<{ found: boolean; selector: string; elapsed: number }>((resolve, reject) => {
+        const start = Date.now();
+
+        // Check immediately
+        if (document.querySelector(selector)) {
+          return resolve({ found: true, selector, elapsed: 0 });
+        }
+
+        // Set up observer
+        const observer = new MutationObserver(() => {
+          if (document.querySelector(selector)) {
+            observer.disconnect();
+            resolve({ found: true, selector, elapsed: Date.now() - start });
+          }
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Timeout fallback
+        setTimeout(() => {
+          observer.disconnect();
+          reject(new Error(`Timeout: element "${selector}" not found within ${timeoutMs}ms`));
+        }, timeoutMs);
+      });
+    },
+    args: [payload.selector, timeout],
+  });
+
+  if (!result?.result) throw new Error('Failed to wait for element');
+  return result.result as WaitForElementResponse;
 }

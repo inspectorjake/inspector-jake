@@ -16,7 +16,6 @@ import {
   jsonResponse,
   imageResponse,
   renderSelections,
-  type ContentItem,
   type SelectionData,
 } from './response-builder.js';
 
@@ -27,9 +26,9 @@ export interface SessionInfo {
 
 const TOOLS = [
   {
-    name: 'inspector_get_selected_element',
+    name: 'get_user_selections',
     description:
-      'Get the element currently selected in Chrome DevTools Elements panel. Returns element info including tag, id, classes, attributes, and bounding rect. Also includes any user selections (elements and screenshots). Useful for understanding what the user is looking at.',
+      'Get all user selections from the DevTools panel. Returns an array of selections - either element selections (with selector metadata, use view_user_selection_image to see the screenshot) or screenshot selections (with full image data inline).',
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -37,84 +36,24 @@ const TOOLS = [
     },
   },
   {
-    name: 'inspector_get_selections',
+    name: 'view_user_selection_image',
     description:
-      'Get all user selections from the DevTools panel. Returns an array of selections - either element selections (with selector metadata, use inspector_view_image to see the screenshot) or screenshot selections (with full image data inline).',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'inspector_view_image',
-    description:
-      'View a stored image by its ID. Use this when you need to see element screenshots. Call inspector_get_selections first to get available image IDs.',
+      'View a stored user selection image by its ID. Use this when you need to see element screenshots. Call get_user_selections first to get available image IDs.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         imageId: {
           type: 'string',
-          description: 'The image ID from inspector_get_selections response',
+          description: 'The image ID from get_user_selections response',
         },
       },
       required: ['imageId'],
     },
   },
   {
-    name: 'inspector_snapshot',
+    name: 'get_page_info',
     description:
-      'Get an ARIA accessibility tree snapshot of the current page. Returns a structured representation of the page content that can be used to understand page structure and find elements.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'inspector_screenshot',
-    description:
-      'Capture a screenshot of the page or a specific element. Returns base64-encoded PNG image.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        selector: {
-          type: 'string',
-          description: 'CSS selector of element to screenshot. If omitted, captures the viewport.',
-        },
-        fullPage: {
-          type: 'boolean',
-          description: 'If true, captures the entire scrollable page. Ignored if selector is provided.',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'inspector_get_page_info',
-    description:
-      'Get basic information about the current page including URL, title, and viewport dimensions.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'inspector_get_session_info',
-    description:
-      "Get information about the current MCP session including session name, port, and browser connection status. Call this to find out which session to connect to in the Jake MCP Chrome extension.",
-    inputSchema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  // Browser automation tools
-  {
-    name: 'interactive_context',
-    description:
-      'Get accessibility tree with element refs for interaction. Each element has a ref (e.g., "s1e42") that can be used with browser_click, browser_type, etc. Also includes user selections from DevTools panel.',
+      'Get comprehensive information about the current page including URL, title, viewport dimensions, and a full ARIA accessibility tree with interactive element refs. Each element has a ref (e.g., "s1e42") that can be used with click_element, type_into_element, and other interaction tools. Optionally scope the tree to a subtree with a CSS selector.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -127,15 +66,25 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_screenshot',
+    name: 'get_session_info',
     description:
-      'Enhanced screenshot with element ref support. Can screenshot by ref from interactive_context, CSS selector, or full page.',
+      'Get information about the current MCP session including session name, port, and browser connection status.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'capture_screenshot',
+    description:
+      'Capture a screenshot of the page or a specific element. Supports targeting by element ref (from get_page_info), CSS selector, or full page capture.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         ref: {
           type: 'string',
-          description: 'Element ref from interactive_context (e.g., "s1e42")',
+          description: 'Element ref from get_page_info (e.g., "s1e42")',
         },
         selector: {
           type: 'string',
@@ -154,7 +103,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_evaluate',
+    name: 'run_javascript',
     description:
       'Execute JavaScript code in the page context. Returns the evaluation result.',
     inputSchema: {
@@ -169,16 +118,16 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_get_console_logs',
+    name: 'get_console_logs',
     description:
-      'Get console log messages from the page.',
+      'Get all console output and uncaught errors from the page. Captures console.log, warn, error, info, debug, trace, assert failures, uncaught exceptions, and unhandled promise rejections.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         types: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Filter by log types: log, warn, error, info',
+          description: 'Filter by log types: log, warn, error, info, debug, trace, assert, exception, unhandledrejection',
         },
         clear: {
           type: 'boolean',
@@ -189,7 +138,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_navigate',
+    name: 'navigate_to_url',
     description:
       'Navigate the browser to a URL.',
     inputSchema: {
@@ -204,7 +153,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_go_back',
+    name: 'go_back',
     description:
       'Navigate back in browser history.',
     inputSchema: {
@@ -214,7 +163,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_go_forward',
+    name: 'go_forward',
     description:
       'Navigate forward in browser history.',
     inputSchema: {
@@ -224,7 +173,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_reload',
+    name: 'reload_page',
     description:
       'Reload the current page.',
     inputSchema: {
@@ -234,15 +183,15 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_click',
+    name: 'click_element',
     description:
-      'Click an element by ref (from interactive_context) or CSS selector.',
+      'Click an element by ref (from get_page_info) or CSS selector.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         ref: {
           type: 'string',
-          description: 'Element ref from interactive_context (e.g., "s1e42")',
+          description: 'Element ref from get_page_info (e.g., "s1e42")',
         },
         selector: {
           type: 'string',
@@ -262,15 +211,15 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_type',
+    name: 'type_into_element',
     description:
-      'Type text into an input element by ref or CSS selector.',
+      'Type text into an input element by ref (from get_page_info) or CSS selector.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         ref: {
           type: 'string',
-          description: 'Element ref from interactive_context (e.g., "s1e42")',
+          description: 'Element ref from get_page_info (e.g., "s1e42")',
         },
         selector: {
           type: 'string',
@@ -289,15 +238,15 @@ const TOOLS = [
     },
   },
   {
-    name: 'browser_select_option',
+    name: 'select_dropdown_option',
     description:
-      'Select an option from a <select> dropdown by ref or selector.',
+      'Select an option from a <select> dropdown by ref (from get_page_info) or selector.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         ref: {
           type: 'string',
-          description: 'Element ref from interactive_context (e.g., "s1e42")',
+          description: 'Element ref from get_page_info (e.g., "s1e42")',
         },
         selector: {
           type: 'string',
@@ -317,6 +266,25 @@ const TOOLS = [
         },
       },
       required: [],
+    },
+  },
+  {
+    name: 'wait_for_element',
+    description:
+      'Wait until an element matching a CSS selector appears on the page. Returns when found or throws on timeout.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        selector: {
+          type: 'string',
+          description: 'CSS selector to wait for',
+        },
+        timeout: {
+          type: 'number',
+          description: 'Maximum wait time in milliseconds (default: 5000, max: 30000)',
+        },
+      },
+      required: ['selector'],
     },
   },
 ];
@@ -359,39 +327,9 @@ Once connected, use the inspector tools to interact with the page.`,
     const { name, arguments: args } = request.params;
 
     switch (name) {
-      case 'inspector_get_selected_element': {
+      case 'get_user_selections': {
         const response = await wsServer.sendToolRequest(
-          'inspector_get_selected_element',
-          {}
-        );
-
-        if (!response.success) {
-          return errorResponse(response.error || 'Unknown error');
-        }
-
-        const result = response.result as {
-          selected: boolean;
-          element?: any;
-          reason?: string;
-          selections?: SelectionData[];
-        };
-
-        const content: ContentItem[] = [
-          {
-            type: 'text',
-            text: JSON.stringify({ selected: result.selected, element: result.element, reason: result.reason }, null, 2),
-          },
-        ];
-
-        // Add selections using shared utility
-        content.push(...renderSelections(result.selections));
-
-        return { content };
-      }
-
-      case 'inspector_get_selections': {
-        const response = await wsServer.sendToolRequest(
-          'inspector_get_selections',
+          'get_user_selections',
           {}
         );
 
@@ -411,14 +349,14 @@ Once connected, use the inspector tools to interact with the page.`,
         return { content };
       }
 
-      case 'inspector_view_image': {
+      case 'view_user_selection_image': {
         const imageId = args?.imageId as string;
         if (!imageId) {
           return errorResponse('imageId is required');
         }
 
         const response = await wsServer.sendToolRequest(
-          'inspector_view_image',
+          'view_user_selection_image',
           { imageId }
         );
 
@@ -438,83 +376,8 @@ Once connected, use the inspector tools to interact with the page.`,
         );
       }
 
-      case 'inspector_snapshot': {
-        const response = await wsServer.sendToolRequest(
-          'inspector_snapshot',
-          {}
-        );
-
-        if (!response.success) {
-          return errorResponse(response.error || 'Unknown error');
-        }
-
-        const result = response.result as {
-          snapshot: string;
-          selections?: SelectionData[];
-        };
-
-        const content: ContentItem[] = [
-          {
-            type: 'text',
-            text: JSON.stringify({ snapshot: result.snapshot }, null, 2),
-          },
-        ];
-
-        // Add selections using shared utility
-        content.push(...renderSelections(result.selections));
-
-        return { content };
-      }
-
-      case 'inspector_screenshot': {
-        const payload = {
-          selector: args?.selector as string | undefined,
-          fullPage: args?.fullPage as boolean | undefined,
-        };
-
-        const response = await wsServer.sendToolRequest(
-          'inspector_screenshot',
-          payload
-        );
-
-        if (!response.success) {
-          return errorResponse(response.error || 'Unknown error');
-        }
-
-        const result = response.result as { image: string; width: number; height: number };
-
-        return imageResponse(
-          result.image,
-          `Screenshot captured: ${result.width}x${result.height}`
-        );
-      }
-
-      case 'inspector_get_page_info': {
-        const response = await wsServer.sendToolRequest(
-          'inspector_get_page_info',
-          {}
-        );
-
-        if (!response.success) {
-          return errorResponse(response.error || 'Unknown error');
-        }
-
-        return jsonResponse(response.result);
-      }
-
-      case 'inspector_get_session_info': {
-        const discoveryInfo = wsServer.getDiscoveryInfo();
-        return jsonResponse({
-          sessionName: sessionInfo.sessionName,
-          port: sessionInfo.port,
-          browserConnected: discoveryInfo.status === 'connected',
-          connectedTab: discoveryInfo.connectedTab || null,
-        });
-      }
-
-      // Browser automation tools
-      case 'interactive_context': {
-        const response = await wsServer.sendToolRequest('interactive_context', {
+      case 'get_page_info': {
+        const response = await wsServer.sendToolRequest('get_page_info', {
           selector: args?.selector as string | undefined,
         });
 
@@ -525,25 +388,32 @@ Once connected, use the inspector tools to interact with the page.`,
         const result = response.result as {
           url: string;
           title: string;
+          viewport: { width: number; height: number };
           snapshot: string;
-          selections?: SelectionData[];
         };
 
-        const content: ContentItem[] = [
-          {
-            type: 'text',
-            text: `Page: ${result.title}\nURL: ${result.url}\n\n${result.snapshot}`,
-          },
-        ];
-
-        // Add selections using shared utility
-        content.push(...renderSelections(result.selections));
-
-        return { content };
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Page: ${result.title}\nURL: ${result.url}\nViewport: ${result.viewport.width}x${result.viewport.height}\n\n${result.snapshot}`,
+            },
+          ],
+        };
       }
 
-      case 'browser_screenshot': {
-        const response = await wsServer.sendToolRequest('browser_screenshot', {
+      case 'get_session_info': {
+        const discoveryInfo = wsServer.getDiscoveryInfo();
+        return jsonResponse({
+          sessionName: sessionInfo.sessionName,
+          port: sessionInfo.port,
+          browserConnected: discoveryInfo.status === 'connected',
+          connectedTab: discoveryInfo.connectedTab || null,
+        });
+      }
+
+      case 'capture_screenshot': {
+        const response = await wsServer.sendToolRequest('capture_screenshot', {
           ref: args?.ref as string | undefined,
           selector: args?.selector as string | undefined,
           fullPage: args?.fullPage as boolean | undefined,
@@ -558,13 +428,13 @@ Once connected, use the inspector tools to interact with the page.`,
         return imageResponse(result.image, `Screenshot: ${result.width}x${result.height}`);
       }
 
-      case 'browser_evaluate': {
+      case 'run_javascript': {
         const code = args?.code as string;
         if (!code) {
           return errorResponse('code is required');
         }
 
-        const response = await wsServer.sendToolRequest('browser_evaluate', { code });
+        const response = await wsServer.sendToolRequest('run_javascript', { code });
 
         if (!response.success) {
           return errorResponse(response.error || 'Unknown error');
@@ -578,8 +448,8 @@ Once connected, use the inspector tools to interact with the page.`,
         return jsonResponse({ result: result.result });
       }
 
-      case 'browser_get_console_logs': {
-        const response = await wsServer.sendToolRequest('browser_get_console_logs', {
+      case 'get_console_logs': {
+        const response = await wsServer.sendToolRequest('get_console_logs', {
           types: args?.types as string[] | undefined,
           clear: args?.clear as boolean | undefined,
         });
@@ -591,13 +461,13 @@ Once connected, use the inspector tools to interact with the page.`,
         return jsonResponse(response.result);
       }
 
-      case 'browser_navigate': {
+      case 'navigate_to_url': {
         const url = args?.url as string;
         if (!url) {
           return errorResponse('url is required');
         }
 
-        const response = await wsServer.sendToolRequest('browser_navigate', { url });
+        const response = await wsServer.sendToolRequest('navigate_to_url', { url });
 
         if (!response.success) {
           return errorResponse(response.error || 'Unknown error');
@@ -606,8 +476,8 @@ Once connected, use the inspector tools to interact with the page.`,
         return jsonResponse(response.result);
       }
 
-      case 'browser_go_back': {
-        const response = await wsServer.sendToolRequest('browser_go_back', {});
+      case 'go_back': {
+        const response = await wsServer.sendToolRequest('go_back', {});
 
         if (!response.success) {
           return errorResponse(response.error || 'Unknown error');
@@ -616,8 +486,8 @@ Once connected, use the inspector tools to interact with the page.`,
         return jsonResponse(response.result);
       }
 
-      case 'browser_go_forward': {
-        const response = await wsServer.sendToolRequest('browser_go_forward', {});
+      case 'go_forward': {
+        const response = await wsServer.sendToolRequest('go_forward', {});
 
         if (!response.success) {
           return errorResponse(response.error || 'Unknown error');
@@ -626,8 +496,8 @@ Once connected, use the inspector tools to interact with the page.`,
         return jsonResponse(response.result);
       }
 
-      case 'browser_reload': {
-        const response = await wsServer.sendToolRequest('browser_reload', {});
+      case 'reload_page': {
+        const response = await wsServer.sendToolRequest('reload_page', {});
 
         if (!response.success) {
           return errorResponse(response.error || 'Unknown error');
@@ -636,8 +506,8 @@ Once connected, use the inspector tools to interact with the page.`,
         return jsonResponse(response.result);
       }
 
-      case 'browser_click': {
-        const response = await wsServer.sendToolRequest('browser_click', {
+      case 'click_element': {
+        const response = await wsServer.sendToolRequest('click_element', {
           ref: args?.ref as string | undefined,
           selector: args?.selector as string | undefined,
           button: args?.button as string | undefined,
@@ -651,13 +521,13 @@ Once connected, use the inspector tools to interact with the page.`,
         return jsonResponse(response.result);
       }
 
-      case 'browser_type': {
+      case 'type_into_element': {
         const text = args?.text as string;
         if (!text) {
           return errorResponse('text is required');
         }
 
-        const response = await wsServer.sendToolRequest('browser_type', {
+        const response = await wsServer.sendToolRequest('type_into_element', {
           ref: args?.ref as string | undefined,
           selector: args?.selector as string | undefined,
           text,
@@ -671,13 +541,31 @@ Once connected, use the inspector tools to interact with the page.`,
         return jsonResponse(response.result);
       }
 
-      case 'browser_select_option': {
-        const response = await wsServer.sendToolRequest('browser_select_option', {
+      case 'select_dropdown_option': {
+        const response = await wsServer.sendToolRequest('select_dropdown_option', {
           ref: args?.ref as string | undefined,
           selector: args?.selector as string | undefined,
           value: args?.value as string | undefined,
           label: args?.label as string | undefined,
           index: args?.index as number | undefined,
+        });
+
+        if (!response.success) {
+          return errorResponse(response.error || 'Unknown error');
+        }
+
+        return jsonResponse(response.result);
+      }
+
+      case 'wait_for_element': {
+        const selector = args?.selector as string;
+        if (!selector) {
+          return errorResponse('selector is required');
+        }
+
+        const response = await wsServer.sendToolRequest('wait_for_element', {
+          selector,
+          timeout: args?.timeout as number | undefined,
         });
 
         if (!response.success) {

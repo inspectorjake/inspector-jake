@@ -74,52 +74,37 @@ export interface ScreenshotSelection extends BaseSelection {
 export type Selection = ElementSelection | ScreenshotSelection;
 
 // Tool request types
-export interface GetSelectedElementRequest {}
-
-export interface SnapshotRequest {}
-
 export interface ScreenshotRequest {
   selector?: string;
   fullPage?: boolean;
 }
 
-export interface GetPageInfoRequest {}
+export interface GetPageInfoRequest {
+  selector?: string;
+}
 
 // Tool response types
-export interface GetSelectedElementResponse {
-  selected: boolean;
-  element?: ElementInfo;
-  reason?: 'DevTools not open' | 'No element selected';
-}
-
-export interface SnapshotResponse {
-  snapshot: string; // ARIA accessibility tree
-}
-
 export interface ScreenshotResponse extends ScreenshotResult {}
 
 export interface GetPageInfoResponse extends PageInfo {}
 
 // WebSocket message types (MCP Server <-> Extension)
 export type ToolType =
-  | 'inspector_get_selected_element'
-  | 'inspector_get_selections'
-  | 'inspector_view_image'
-  | 'inspector_snapshot'
-  | 'inspector_screenshot'
-  | 'inspector_get_page_info'
-  // Browser automation tools
-  | 'interactive_context'
-  | 'browser_screenshot'
-  | 'browser_evaluate'
-  | 'browser_get_console_logs'
-  | 'browser_navigate'
-  | 'browser_go_back'
-  | 'browser_go_forward'
-  | 'browser_reload'
-  | 'browser_click'
-  | 'browser_type'
-  | 'browser_select_option';
+  | 'get_user_selections'
+  | 'view_user_selection_image'
+  | 'get_page_info'
+  | 'get_session_info'
+  | 'capture_screenshot'
+  | 'run_javascript'
+  | 'get_console_logs'
+  | 'navigate_to_url'
+  | 'go_back'
+  | 'go_forward'
+  | 'reload_page'
+  | 'click_element'
+  | 'type_into_element'
+  | 'select_dropdown_option'
+  | 'wait_for_element';
 
 // Request types for new tools
 export interface GetSelectionsRequest {}
@@ -150,16 +135,27 @@ export interface ViewImageResponse {
   error?: string;
 }
 
+export interface WaitForElementRequest {
+  selector: string;
+  timeout?: number;
+}
+
+export interface WaitForElementResponse {
+  found: boolean;
+  selector: string;
+  elapsed: number;
+}
+
 export interface ToolRequest {
   id: string;
   type: ToolType;
-  payload: GetSelectedElementRequest | SnapshotRequest | ScreenshotRequest | GetPageInfoRequest | GetSelectionsRequest | ViewImageRequest;
+  payload: ScreenshotRequest | GetPageInfoRequest | GetSelectionsRequest | ViewImageRequest | BrowserScreenshotRequest | BrowserClickRequest | BrowserTypeRequest | BrowserSelectOptionRequest | BrowserNavigateRequest | BrowserEvaluateRequest | BrowserGetConsoleLogsRequest | WaitForElementRequest;
 }
 
 export interface ToolResponse {
   id: string;
   success: boolean;
-  result?: GetSelectedElementResponse | SnapshotResponse | ScreenshotResponse | GetPageInfoResponse | GetSelectionsResponse | ViewImageResponse;
+  result?: ScreenshotResponse | GetPageInfoResponse | GetSelectionsResponse | ViewImageResponse | InteractiveContextResponse | BrowserActionResponse | BrowserEvaluateResponse | BrowserConsoleLogsResponse | WaitForElementResponse;
   error?: string;
 }
 
@@ -197,7 +193,7 @@ export type ExtensionMessage =
   | ExtensionDisconnectionMessage;
 
 // =============================================================================
-// ARIA Tree Types (for interactive_context tool)
+// ARIA Tree Types (for get_page_info tool)
 // =============================================================================
 
 /**
@@ -243,27 +239,17 @@ export interface Snapshot {
 }
 
 /**
- * Response from interactive_context tool.
+ * Response from get_page_info tool (merged page info + interactive context).
  */
 export interface InteractiveContextResponse {
   /** Page URL */
   url: string;
   /** Page title */
   title: string;
+  /** Viewport dimensions */
+  viewport: { width: number; height: number };
   /** Formatted ARIA tree as text */
   snapshot: string;
-  /** User selections from DevTools panel */
-  selections?: Array<{
-    type: 'element' | 'screenshot';
-    id: string;
-    image?: string;
-    selector?: string;
-    tagName?: string;
-    className?: string;
-    dimensions: string;
-    rect: { x: number; y: number; width: number; height: number };
-    hint?: string;
-  }>;
 }
 
 // =============================================================================
@@ -308,12 +294,8 @@ export interface BrowserScreenshotRequest {
 }
 
 export interface BrowserGetConsoleLogsRequest {
-  types?: ('log' | 'warn' | 'error' | 'info')[];
+  types?: ('log' | 'warn' | 'error' | 'info' | 'debug' | 'trace' | 'assert' | 'exception' | 'unhandledrejection')[];
   clear?: boolean;
-}
-
-export interface InteractiveContextRequest {
-  selector?: string;
 }
 
 export interface BrowserActionResponse {
