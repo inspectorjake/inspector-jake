@@ -45,6 +45,7 @@ const {
   connectToSession: connectToSessionBase,
   disconnect,
   handleConnectionClosed,
+  stopStatusPolling,
 } = useConnection();
 
 const {
@@ -204,6 +205,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   chrome.runtime.onMessage.removeListener(handleMessage);
+  stopStatusPolling();
   if (isPicking.value) {
     stopElementPicker();
   }

@@ -1,11 +1,13 @@
 /**
  * Composable for managing MCP session connection.
  * Handles session discovery, connection, and status tracking.
- * Extracted from Panel.vue to improve testability and reusability.
+ * Includes periodic status polling to detect stale connection state.
  */
 import { ref, computed } from 'vue';
 import type { SessionName } from '@inspector-jake/shared';
 import { log } from '../../utils/logger.js';
+
+const STATUS_POLL_INTERVAL_MS = 8000; // Poll every 8 seconds
 
 /**
  * Discovered session from MCP server.
@@ -49,6 +51,9 @@ export function useConnection() {
   const isConnected = computed(() => connectionStatus.value.connected);
   const connectedSessionName = computed(() => connectionStatus.value.sessionName);
 
+  // Status polling state
+  let statusPollTimer: ReturnType<typeof setInterval> | null = null;
+
   /**
    * Scan for available MCP sessions.
    */
@@ -74,6 +79,13 @@ export function useConnection() {
     try {
       const status = await chrome.runtime.sendMessage({ type: 'GET_CONNECTION_STATUS' });
       connectionStatus.value = status;
+
+      // Start or stop polling based on actual connection state
+      if (status.connected) {
+        startStatusPolling();
+      } else {
+        stopStatusPolling();
+      }
     } catch (err) {
       log.error('useConnection', 'Failed to get connection status:', err);
     }
@@ -107,6 +119,7 @@ export function useConnection() {
           sessionName: session.name,
           tabId: tabId,
         };
+        startStatusPolling();
         return true;
       } else {
         error.value = response.error || 'Connection failed';
@@ -132,6 +145,7 @@ export function useConnection() {
         sessionName: null,
         tabId: null,
       };
+      stopStatusPolling();
     } catch (err) {
       log.error('useConnection', 'Failed to disconnect:', err);
     }
@@ -146,6 +160,42 @@ export function useConnection() {
       sessionName: null,
       tabId: null,
     };
+    stopStatusPolling();
+  }
+
+  /**
+   * Start periodic polling of actual connection status from background.
+   * Detects stale UI state when event messages are missed.
+   */
+  function startStatusPolling(): void {
+    if (statusPollTimer) return; // Already polling
+
+    statusPollTimer = setInterval(async () => {
+      try {
+        const status = await chrome.runtime.sendMessage({ type: 'GET_CONNECTION_STATUS' });
+
+        // Detect mismatch: UI thinks connected but background says disconnected
+        if (connectionStatus.value.connected && !status.connected) {
+          log.warn('useConnection', 'Connection state mismatch detected: UI=connected, background=disconnected');
+          handleConnectionClosed();
+          return;
+        }
+
+        connectionStatus.value = status;
+      } catch (err) {
+        log.error('useConnection', 'Status poll failed:', err);
+      }
+    }, STATUS_POLL_INTERVAL_MS);
+
+    log.debug('useConnection', 'Status polling started');
+  }
+
+  function stopStatusPolling(): void {
+    if (statusPollTimer) {
+      clearInterval(statusPollTimer);
+      statusPollTimer = null;
+      log.debug('useConnection', 'Status polling stopped');
+    }
   }
 
   return {
@@ -166,5 +216,6 @@ export function useConnection() {
     connectToSession,
     disconnect,
     handleConnectionClosed,
+    stopStatusPolling,
   };
 }

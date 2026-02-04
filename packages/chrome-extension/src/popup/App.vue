@@ -35,6 +35,7 @@ const connectionStatus = ref<ConnectionStatus>({
 });
 const currentTab = ref<chrome.tabs.Tab | null>(null);
 const error = ref<string | null>(null);
+let statusPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const isConnected = computed(() => connectionStatus.value.connected);
 const connectedSessionName = computed(() => connectionStatus.value.sessionName);
@@ -132,10 +133,17 @@ onMounted(async () => {
     getConnectionStatus(),
     scanForSessions(),
   ]);
+
+  // Poll connection status while popup is open
+  statusPollTimer = setInterval(getConnectionStatus, 8000);
 });
 
 onUnmounted(() => {
   chrome.runtime.onMessage.removeListener(handleMessage);
+  if (statusPollTimer) {
+    clearInterval(statusPollTimer);
+    statusPollTimer = null;
+  }
 });
 </script>
 

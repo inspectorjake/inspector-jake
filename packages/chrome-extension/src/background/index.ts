@@ -11,6 +11,8 @@ import {
   getConnectionStatus,
   disconnectSession,
   updateConnectedTab,
+  handleKeepaliveAlarm,
+  KEEPALIVE_ALARM_NAME,
 } from './ws-client.js';
 import {
   updateSelectedElement,
@@ -22,6 +24,13 @@ import {
 } from './tool-handlers.js';
 import type { ElementInfo, SessionName } from '@inspector-jake/shared';
 import { log } from '../utils/logger.js';
+
+// Handle keepalive alarms to prevent service worker termination
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === KEEPALIVE_ALARM_NAME) {
+    handleKeepaliveAlarm();
+  }
+});
 
 // Handle messages from popup and DevTools
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

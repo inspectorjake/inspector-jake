@@ -14,6 +14,8 @@ import type {
 } from '@inspector-jake/shared';
 import { log } from './logger.js';
 
+const PING_INTERVAL_MS = 15000;  // Send ping every 15 seconds
+
 export interface WsServerInstance {
   port: number;
   sendToolRequest: (type: ToolType, payload: unknown) => Promise<ToolResponse>;
@@ -35,6 +37,34 @@ export async function createWsServer(port: number): Promise<WsServerInstance> {
     let clientSocket: WebSocket | null = null;
     let sessionName: string = '';
     let connectedTabInfo: { id: number; title: string; url: string } | undefined;
+    let pingInterval: NodeJS.Timeout | null = null;
+    let isAlive = false;
+
+    function startPingInterval(ws: WebSocket): void {
+      stopPingInterval();
+      isAlive = true;
+
+      pingInterval = setInterval(() => {
+        if (!isAlive) {
+          log.warn('WS', 'Client did not respond to ping, terminating connection');
+          ws.terminate();
+          return;
+        }
+
+        isAlive = false;
+        ws.ping();
+        log.trace('WS', 'Sent ping to extension');
+      }, PING_INTERVAL_MS);
+
+      log.info('WS', 'Server-side ping interval started');
+    }
+
+    function stopPingInterval(): void {
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
+    }
 
     // Create HTTP server for health endpoint (enables silent discovery pre-checks)
     const httpServer: HttpServer = createServer((req, res) => {
@@ -132,6 +162,7 @@ export async function createWsServer(port: number): Promise<WsServerInstance> {
         },
 
         close: () => {
+          stopPingInterval();
           wss.close();
           httpServer.close();
         },
@@ -160,6 +191,15 @@ export async function createWsServer(port: number): Promise<WsServerInstance> {
       log.info('WS', 'Browser extension connected');
       clientSocket = ws;
 
+      // Start server-side heartbeat
+      startPingInterval(ws);
+
+      // Protocol-level pong handler (browser responds automatically to ws.ping())
+      ws.on('pong', () => {
+        isAlive = true;
+        log.trace('WS', 'Received pong from extension');
+      });
+
       ws.on('message', (data) => {
         try {
           const message = JSON.parse(data.toString());
@@ -171,6 +211,13 @@ export async function createWsServer(port: number): Promise<WsServerInstance> {
             pendingRequests.delete(message.id);
             pending.resolve(message as ToolResponse);
             log.trace('WS', `Tool response received: ${message.id}`);
+            return;
+          }
+
+          // Handle application-level ping from extension
+          if (message.type === 'ping') {
+            ws.send(JSON.stringify({ type: 'pong' }));
+            log.trace('WS', 'Received app-level ping, sent pong');
             return;
           }
 
@@ -186,6 +233,7 @@ export async function createWsServer(port: number): Promise<WsServerInstance> {
 
       ws.on('close', () => {
         log.info('WS', 'Browser extension disconnected');
+        stopPingInterval();
         clientSocket = null;
         connectedTabInfo = undefined;
       });

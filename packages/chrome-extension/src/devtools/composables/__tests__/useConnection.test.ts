@@ -1,8 +1,8 @@
 /**
  * Tests for useConnection composable.
- * Covers session discovery, connection management, and status tracking.
+ * Covers session discovery, connection management, status tracking, and polling.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { nextTick } from 'vue';
 import { useConnection } from '../useConnection.js';
 
@@ -17,12 +17,24 @@ vi.stubGlobal('chrome', {
       tabId: 123,
     },
   },
+  alarms: {
+    create: vi.fn(),
+    clear: vi.fn(),
+    onAlarm: {
+      addListener: vi.fn(),
+    },
+  },
 });
 
 describe('useConnection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSendMessage.mockReset();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('initial state', () => {
@@ -256,6 +268,76 @@ describe('useConnection', () => {
       expect(connectionStatus.value.connected).toBe(false);
       expect(connectionStatus.value.sessionName).toBeNull();
       expect(connectionStatus.value.tabId).toBeNull();
+    });
+  });
+
+  describe('status polling', () => {
+    const mockSession = { name: 'jake', port: 52192, status: 'ready' as const };
+
+    it('should start polling after successful connection', async () => {
+      const { connectToSession } = useConnection();
+      mockSendMessage.mockResolvedValue({ success: true });
+
+      await connectToSession(mockSession);
+
+      // After the polling interval, a GET_CONNECTION_STATUS message should be sent
+      mockSendMessage.mockClear();
+      mockSendMessage.mockResolvedValue({ connected: true, sessionName: 'jake', tabId: 123 });
+
+      await vi.advanceTimersByTimeAsync(8000);
+
+      expect(mockSendMessage).toHaveBeenCalledWith({ type: 'GET_CONNECTION_STATUS' });
+    });
+
+    it('should detect state mismatch and update to disconnected', async () => {
+      const { connectToSession, connectionStatus } = useConnection();
+      mockSendMessage.mockResolvedValue({ success: true });
+
+      await connectToSession(mockSession);
+
+      // Background reports disconnected on next poll
+      mockSendMessage.mockResolvedValue({ connected: false, sessionName: null, tabId: null });
+
+      await vi.advanceTimersByTimeAsync(8000);
+
+      expect(connectionStatus.value.connected).toBe(false);
+    });
+
+    it('should stop polling on disconnect', async () => {
+      const { connectToSession, disconnect } = useConnection();
+      mockSendMessage.mockResolvedValue({ success: true });
+
+      await connectToSession(mockSession);
+      mockSendMessage.mockClear();
+      mockSendMessage.mockResolvedValue({});
+
+      await disconnect();
+      mockSendMessage.mockClear();
+
+      // Advance timer - no polling should occur
+      await vi.advanceTimersByTimeAsync(16000);
+
+      // Should not have sent any GET_CONNECTION_STATUS messages
+      const statusCalls = mockSendMessage.mock.calls.filter(
+        (call) => call[0]?.type === 'GET_CONNECTION_STATUS'
+      );
+      expect(statusCalls).toHaveLength(0);
+    });
+
+    it('should stop polling on handleConnectionClosed', async () => {
+      const { connectToSession, handleConnectionClosed } = useConnection();
+      mockSendMessage.mockResolvedValue({ success: true });
+
+      await connectToSession(mockSession);
+      handleConnectionClosed();
+      mockSendMessage.mockClear();
+
+      await vi.advanceTimersByTimeAsync(16000);
+
+      const statusCalls = mockSendMessage.mock.calls.filter(
+        (call) => call[0]?.type === 'GET_CONNECTION_STATUS'
+      );
+      expect(statusCalls).toHaveLength(0);
     });
   });
 });
